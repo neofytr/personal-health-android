@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Personal Health",
-    "slug": "personal-health",
+    "name": "ActiveBharat",
+    "slug": "activebharat",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -9,7 +9,7 @@
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0f172a"
+      "backgroundColor": "#000000"
     },
     "assetBundlePatterns": [
       "**/*",
@@ -17,31 +17,34 @@
     ],
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.personalhealth.app"
+      "bundleIdentifier": "com.activebharat.app"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0f172a"
+        "backgroundColor": "#000000"
       },
-      "package": "com.personalhealth.app",
+      "package": "com.activebharat.app",
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.INTERNET",
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.ACCESS_COARSE_LOCATION"
-      ]
+        "android.permission.VIBRATE"
+      ],
+      "softwareKeyboardLayoutMode": "pan",
+      "usesCleartextTraffic": true
     },
     "plugins": [
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow Personal Health to use camera for AI biomechanics analysis."
+          "cameraPermission": "ActiveBharat uses your camera for real-time AI form analysis during training sessions."
         }
-      ]
+      ],
+      "expo-asset",
+      "expo-font"
     ],
     "extra": {
-      "backendHost": "192.168.1.16"
+      "backendHost": "172.17.62.56"
     }
   }
 }

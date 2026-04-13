@@ -1,26 +1,15 @@
 /**
- * Personal Health — Backend Constants
- * ======================================
- * Set your Wi-Fi IP in app.json under expo.extra.backendHost.
- *
- *   app.json:  "extra": { "backendHost": "192.168.x.x" }
- *
- * PROXY_PORT (8083)  → personal-health-frontend Node.js proxy (recommended)
- * FASTAPI_PORT (8082) → personal-health-backend FastAPI direct
+ * Backend Constants
+ * Uses localhost — adb reverse tunnels USB to computer.
+ * Works regardless of wifi network.
  */
-import Constants from 'expo-constants';
 
-// Your machine's Wi-Fi IP — set via app.json extra.backendHost
-export const BACKEND_HOST =
-    Constants.expoConfig?.extra?.backendHost ?? '10.0.2.2';
+const BACKEND_HOST = 'localhost';
+const BACKEND_PORT = 8082;
 
-// Use the frontend proxy (recommended — avoids Windows Firewall issues)
+export { BACKEND_HOST };
+export const FASTAPI_PORT = BACKEND_PORT;
 export const PROXY_PORT = 8083;
-
-// Direct FastAPI port (Phase 2 WebSocket connects here directly)
-export const FASTAPI_PORT = 8082;
-
-// Computed URLs
-export const API_BASE = `http://${BACKEND_HOST}:${PROXY_PORT}`;
-export const WS_BASE = `ws://${BACKEND_HOST}:${FASTAPI_PORT}`;
-export const API_TIMEOUT = 20000; // ms
+export const API_BASE = `http://${BACKEND_HOST}:${BACKEND_PORT}`;
+export const WS_BASE = `ws://${BACKEND_HOST}:${BACKEND_PORT}`;
+export const API_TIMEOUT = 15000;

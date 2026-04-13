@@ -1,5 +1,7 @@
-// ActiveBharat — Root App with Navigation
-// 6 tabs + 9 stack screens (modals + full-screen flows)
+// ActiveBharat — Minimal App
+// 4 tabs: Home, Train, Progress, Profile
+// 5 stacks: GhostSkeleton, HeartRate, TrainingPlan, ScoreCard, FitnessTest
+
 import React, { useState, useCallback } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -10,40 +12,30 @@ import { StatusBar } from 'expo-status-bar';
 import { UserProvider } from './src/context/UserContext';
 
 // Tabs
-import HomeScreen         from './src/screens/HomeScreen';
-import MetricsScreen      from './src/screens/MetricsScreen';
-import TrainScreen        from './src/screens/TrainScreen';
-import AcademyScreen      from './src/screens/AcademyScreen';
-import HubScreen          from './src/screens/HubScreen';
-import MapScreen          from './src/screens/MapScreen';
+import HomeScreen from './src/screens/HomeScreen';
+import TrainScreen from './src/screens/TrainScreen';
+import ProgressScreen from './src/screens/ProgressScreen';
+import ProfileScreen from './src/screens/ProfileScreen';
 
-// Stack screens
+// Stacks
 import GhostSkeletonScreen from './src/screens/GhostSkeletonScreen';
-import RPPGScreen          from './src/screens/RPPGScreen';
-import FieldBookingScreen  from './src/screens/FieldBookingScreen';
-import LearnSportsScreen   from './src/screens/LearnSportsScreen';
-import FitnessTestScreen   from './src/screens/FitnessTestScreen';
-import GetActiveScreen     from './src/screens/GetActiveScreen';
-import ClassesScreen       from './src/screens/ClassesScreen';
-import SocialFeedScreen    from './src/screens/SocialFeedScreen';
+import RPPGScreen from './src/screens/RPPGScreen';
+import TrainingPlanScreen from './src/screens/TrainingPlanScreen';
+import ScoreCardScreen from './src/screens/ScoreCardScreen';
+import FitnessTestScreen from './src/screens/FitnessTestScreen';
+import NutritionScreen from './src/screens/NutritionScreen';
 
-const Tab   = createBottomTabNavigator();
+const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
-const CYAN  = '#06b6d4';
-const MUTED = '#64748b';
-const BG    = '#0f172a';
+const CYAN = '#06b6d4';
+const MUTED = '#4b5563';
+const BG = '#000';
 
-const TAB_ICONS = {
-    Home:    '🏠',
-    Lab:     '📊',
-    Camera:  '📷',
-    Academy: '📚',
-    Hub:     '👤',
-    Map:     '🗺️',
-};
+const TAB_LABELS = { Home: 'HOME', Train: 'TRAIN', Progress: 'PROGRESS', Profile: 'YOU' };
 
-// ─── Toast Overlay ────────────────────────────────────────────────────────────
+// ─── Toast ──────────────────────────────────────────────────────────────────
+
 function ToastOverlay({ message }) {
     const insets = useSafeAreaInsets();
     if (!message) return null;
@@ -54,51 +46,43 @@ function ToastOverlay({ message }) {
     );
 }
 
-// ─── Tab Navigator ────────────────────────────────────────────────────────────
+// ─── Tabs ───────────────────────────────────────────────────────────────────
+
 function TabNavigator({ showToast }) {
+    const insets = useSafeAreaInsets();
     return (
         <Tab.Navigator
             screenOptions={({ route }) => ({
-                tabBarIcon: ({ focused }) => (
-                    <View style={[styles.tabIconWrap, focused && styles.tabIconActive]}>
-                        <Text style={styles.tabIconText}>{TAB_ICONS[route.name] || '•'}</Text>
-                    </View>
-                ),
+                tabBarIcon: () => null,
                 tabBarLabel: ({ focused }) => (
-                    <Text style={[styles.tabLabel, focused && styles.tabLabelActive]}>{route.name}</Text>
+                    <Text style={[styles.tabLabel, focused && styles.tabLabelActive]}>
+                        {TAB_LABELS[route.name]}
+                    </Text>
                 ),
-                tabBarStyle:  styles.tabBar,
-                headerShown:  false,
+                tabBarStyle: [styles.tabBar, { paddingBottom: Math.max(insets.bottom, 8) + 4, height: 52 + Math.max(insets.bottom, 8) }],
+                headerShown: false,
             })}
         >
             <Tab.Screen name="Home">
                 {(props) => <HomeScreen {...props} showToast={showToast} />}
             </Tab.Screen>
-            <Tab.Screen name="Lab" component={MetricsScreen} />
-            <Tab.Screen name="Camera">
+            <Tab.Screen name="Train">
                 {(props) => <TrainScreen {...props} showToast={showToast} />}
             </Tab.Screen>
-            <Tab.Screen name="Academy">
-                {(props) => <AcademyScreen {...props} showToast={showToast} />}
-            </Tab.Screen>
-            <Tab.Screen name="Hub">
-                {(props) => <HubScreen {...props} showToast={showToast} />}
-            </Tab.Screen>
-            <Tab.Screen name="Map" component={MapScreen} />
+            <Tab.Screen name="Progress" component={ProgressScreen} />
+            <Tab.Screen name="Profile" component={ProfileScreen} />
         </Tab.Navigator>
     );
 }
 
-// ─── Root Stack Navigator ─────────────────────────────────────────────────────
+// ─── Root Stack ─────────────────────────────────────────────────────────────
+
 function AppNavigator({ showToast }) {
     return (
         <Stack.Navigator screenOptions={{ headerShown: false }}>
-            {/* Main tab flow */}
             <Stack.Screen name="Tabs">
                 {(props) => <TabNavigator {...props} showToast={showToast} />}
             </Stack.Screen>
-
-            {/* Existing modal flows */}
             <Stack.Screen
                 name="GhostSkeleton"
                 component={GhostSkeletonScreen}
@@ -110,43 +94,33 @@ function AppNavigator({ showToast }) {
                 options={{ animation: 'slide_from_bottom', presentation: 'fullScreenModal' }}
             />
             <Stack.Screen
-                name="FieldBooking"
-                component={FieldBookingScreen}
+                name="TrainingPlan"
+                component={TrainingPlanScreen}
                 options={{ animation: 'slide_from_right' }}
             />
-
-            {/* New feature screens — all launched from HomeScreen content grid */}
             <Stack.Screen
-                name="LearnSports"
-                component={LearnSportsScreen}
-                options={{ animation: 'slide_from_right' }}
+                name="ScoreCard"
+                component={ScoreCardScreen}
+                options={{ animation: 'slide_from_bottom', presentation: 'fullScreenModal' }}
             />
             <Stack.Screen
                 name="FitnessTest"
                 component={FitnessTestScreen}
                 options={{ animation: 'slide_from_right' }}
             />
-            <Stack.Screen name="GetActive">
-                {(props) => <GetActiveScreen {...props} showToast={showToast} />}
-            </Stack.Screen>
             <Stack.Screen
-                name="Classes"
-                component={ClassesScreen}
-                options={{ animation: 'slide_from_right' }}
-            />
-            <Stack.Screen
-                name="SocialFeed"
-                component={SocialFeedScreen}
+                name="Nutrition"
+                component={NutritionScreen}
                 options={{ animation: 'slide_from_right' }}
             />
         </Stack.Navigator>
     );
 }
 
-// ─── Root App ─────────────────────────────────────────────────────────────────
+// ─── Root ───────────────────────────────────────────────────────────────────
+
 export default function App() {
     const [toastMsg, setToastMsg] = useState('');
-
     const showToast = useCallback((msg) => {
         setToastMsg(msg);
         setTimeout(() => setToastMsg(''), 3500);
@@ -154,7 +128,7 @@ export default function App() {
 
     return (
         <SafeAreaProvider>
-            <StatusBar style="light" backgroundColor={BG} />
+            <StatusBar style="light" backgroundColor="transparent" translucent />
             <UserProvider>
                 <NavigationContainer>
                     <AppNavigator showToast={showToast} />
@@ -165,38 +139,25 @@ export default function App() {
     );
 }
 
+// ─── Styles ─────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
     tabBar: {
-        backgroundColor: BG,
-        borderTopColor:  'rgba(255,255,255,0.08)',
-        borderTopWidth:  1,
-        height:          68,
-        paddingBottom:   8,
-        paddingTop:      6,
-        elevation:       20,
-        shadowColor:     '#000',
-        shadowOpacity:   0.5,
-        shadowOffset:    { width: 0, height: -4 },
-        shadowRadius:    12,
+        backgroundColor: '#000',
+        borderTopColor: '#111',
+        borderTopWidth: 1,
+        height: 60,
+        paddingBottom: 6,
+        paddingTop: 6,
+        elevation: 0,
     },
-    tabIconWrap:   { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-    tabIconActive: { backgroundColor: 'rgba(6,182,212,0.15)' },
-    tabIconText:   { fontSize: 18 },
-    tabLabel:      { fontSize: 9, fontWeight: '700', color: MUTED, marginTop: 2 },
-    tabLabelActive:{ color: CYAN },
+    tabLabel: { fontSize: 10, fontWeight: '700', color: '#4b5563', letterSpacing: 1.5 },
+    tabLabelActive: { color: '#fff' },
     toast: {
-        position:        'absolute',
-        left:            20,
-        right:           20,
-        backgroundColor: 'rgba(6,182,212,0.96)',
-        borderRadius:    14,
-        padding:         14,
-        alignItems:      'center',
-        elevation:       99,
-        shadowColor:     CYAN,
-        shadowOpacity:   0.5,
-        shadowOffset:    { width: 0, height: 4 },
-        shadowRadius:    10,
+        position: 'absolute', left: 20, right: 20,
+        backgroundColor: 'rgba(6,182,212,0.95)',
+        borderRadius: 14, padding: 14, alignItems: 'center',
+        elevation: 99,
     },
     toastText: { color: '#000', fontWeight: '800', fontSize: 13 },
 });

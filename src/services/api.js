@@ -5,24 +5,17 @@
 import { Platform } from 'react-native';
 import {
     BACKEND_HOST,
-    PROXY_PORT,
     FASTAPI_PORT,
-    API_BASE as BASE_FROM_CONSTANTS,
-    WS_BASE as WS_FROM_CONSTANTS,
+    API_BASE as BASE_URL,
+    WS_BASE as WS_URL,
     API_TIMEOUT,
 } from '../constants';
 
-// On Android phone: use proxy (avoids Windows Firewall & AP isolation).
-// On iOS simulator / browser: hit FastAPI directly.
-export const API_BASE = Platform.OS === 'android'
-    ? BASE_FROM_CONSTANTS                        // http://BACKEND_HOST:8083
-    : `http://localhost:${FASTAPI_PORT}`;        // Direct (emulator/browser)
+// Direct to FastAPI backend
+export const API_BASE = BASE_URL;
 
-// WebSocket through the Node.js proxy to avoid AP isolation on university networks.
-// Proxy rewrites ws://HOST:8083/ws/rppg/... → ws://localhost:8082/rppg/...
-const WS_BASE_RESOLVED = Platform.OS === 'android'
-    ? `ws://${BACKEND_HOST}:${PROXY_PORT}/ws`    // ws://BACKEND_HOST:8083/ws (proxied)
-    : `ws://localhost:${FASTAPI_PORT}`;
+// WebSocket direct to FastAPI (no proxy — proxy causes issues with WS paths)
+const WS_BASE_RESOLVED = `ws://${BACKEND_HOST}:${FASTAPI_PORT}`;
 
 // ─── Core fetch helper ───────────────────────────────────────────────────────
 async function fetchJSON(path, options = {}) {
@@ -174,6 +167,95 @@ export const api = {
             method: 'POST',
             body: JSON.stringify({ follower: athleteId, following: creatorId }),
         }),
+
+    // ─── Dynamic Training Plan ───────────────────────────────────────────
+    /** Get this week's personalized training plan (generates if missing) */
+    getWeeklyPlan: (athleteId) =>
+        fetchJSON(`/plan/${athleteId}/weekly`),
+
+    /** Force a fresh plan for the current week */
+    regeneratePlan: (athleteId) =>
+        fetchJSON(`/plan/${athleteId}/regenerate`, { method: 'POST' }),
+
+    /** Mark a plan day as completed (adherence tracking) */
+    completePlanDay: (athleteId, dateStr) =>
+        fetchJSON(`/plan/${athleteId}/day/${dateStr}/complete`, { method: 'POST' }),
+
+    /** Fetch up to N past weeks of plans */
+    getPlanHistory: (athleteId, limit = 4) =>
+        fetchJSON(`/plan/${athleteId}/history?limit=${limit}`),
+
+    // ─── Progress & Readiness ──────────────────────────────────────────
+    /** Multi-day form trend, BPI curve, session stats */
+    getProgress: (id, days = 30) =>
+        fetchJSON(`/progress/${id}?days=${days}`),
+
+    /** Joints deviating most from ideal ranges */
+    getWeakJoints: (id, days = 30) =>
+        fetchJSON(`/weak-joints/${id}?days=${days}`),
+
+    /** Injury risk band + symmetry deviation */
+    getInjuryRisk: (id, days = 14) =>
+        fetchJSON(`/injury-risk/${id}?days=${days}`),
+
+    /** Competition readiness score with component breakdown */
+    getReadiness: (id, days = 14) =>
+        fetchJSON(`/readiness/${id}?days=${days}`),
+
+    // ─── Weekly Summary ────────────────────────────────────────────────
+    /** Structured weekly recap with coaching note */
+    getWeeklySummary: (athleteId, days = 7) =>
+        fetchJSON(`/athlete/${athleteId}/weekly-summary?days=${days}`),
+
+    // ─── Progressive Load ────────────────────────────────────────────────
+    /** ACWR-based load recommendation */
+    getLoadRecommendation: (athleteId) =>
+        fetchJSON(`/athlete/${athleteId}/load-recommendation`),
+
+    // ─── Score Card ──────────────────────────────────────────────────────
+    /** Get JSON scorecard data for a completed session */
+    getScorecard: (sessionId) =>
+        fetchJSON(`/session/${sessionId}/scorecard`),
+
+    /** Get scorecard PNG URL (for sharing) */
+    getScorecardImageUrl: (sessionId) =>
+        `${API_BASE}/session/${sessionId}/scorecard.png`,
+
+    // ─── Huddle Mode ─────────────────────────────────────────────────────
+    /** Create a group training huddle */
+    createHuddle: (name, sport, coachId = null) =>
+        fetchJSON('/huddle/create', {
+            method: 'POST',
+            body: JSON.stringify({ name, sport, coach_id: coachId }),
+        }),
+
+    /** Join an existing huddle */
+    joinHuddle: (huddleId, athleteId) =>
+        fetchJSON(`/huddle/${huddleId}/join`, {
+            method: 'POST',
+            body: JSON.stringify({ athlete_id: athleteId }),
+        }),
+
+    /** Get live huddle leaderboard */
+    getHuddleLive: (huddleId) =>
+        fetchJSON(`/huddle/${huddleId}/live`),
+
+    /** List all huddles */
+    getHuddles: (status = '') =>
+        fetchJSON(`/huddles${status ? `?status=${status}` : ''}`),
+
+    // ─── Nutrition AI ────────────────────────────────────────────────────
+    /** Analyze food photo via Claude vision */
+    analyzeFood: (athleteId, imageBase64) =>
+        fetchJSON('/nutrition/analyze', {
+            method: 'POST',
+            body: JSON.stringify({ athlete_id: athleteId, image_b64: imageBase64 }),
+        }),
+
+    // ─── Data Export ─────────────────────────────────────────────────────
+    /** Get dataset stats (data flywheel monitoring) */
+    getExportStats: () =>
+        fetchJSON('/admin/export/stats'),
 
     /** Biomechanics live stream: WebSocket for real-time keypoint/pose data. */
     connectLiveStream: (sessionId, onMessage, onError, onClose) => {

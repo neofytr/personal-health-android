@@ -9,6 +9,7 @@ import { INITIAL_USER_DATA } from '../data/constants';
 import api from '../services/api';
 
 const FITNESS_SCORE_KEY = '@fitness_test_latest';
+const STREAK_KEY = '@streak_data';
 
 const UserContext = createContext(null);
 
@@ -20,10 +21,24 @@ export function UserProvider({ children }) {
         score: 0, level: 0, label: 'Not Tested', color: '#64748b', lastTested: null,
     });
 
-    // On mount: load athlete data + persisted fitness score
+    // On mount: load athlete data + persisted fitness score + streak
     useEffect(() => {
         AsyncStorage.getItem(FITNESS_SCORE_KEY).then(raw => {
             if (raw) { try { setFitnessScoreState(JSON.parse(raw)); } catch (_) {} }
+        });
+        AsyncStorage.getItem(STREAK_KEY).then(raw => {
+            if (!raw) return;
+            try {
+                const { lastDate, streak } = JSON.parse(raw);
+                const today = new Date().toISOString().slice(0, 10);
+                const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+                if (lastDate === today || lastDate === yesterday) {
+                    setUserData(prev => ({ ...prev, streak }));
+                } else {
+                    // Streak expired
+                    setUserData(prev => ({ ...prev, streak: 0 }));
+                }
+            } catch (_) {}
         });
 
         api.getAthlete(INITIAL_USER_DATA.avatarId).then(athlete => {
@@ -57,12 +72,18 @@ export function UserProvider({ children }) {
                 sessions: newSessions,
                 level: levelUp ? prev.level + 1 : prev.level,
                 xpRequired: levelUp ? Math.round(prev.xpRequired * 1.4) : prev.xpRequired,
-                streak: prev.streak,
+                streak: prev.streak + 1,
                 // Bump scout readiness slightly per session
                 scoutReadiness: Math.min(100, prev.scoutReadiness + Math.round(xpEarned / 120)),
             };
         });
         if (sessionSummary) setRecentSession(sessionSummary);
+        // Persist streak
+        setUserData(curr => {
+            const today = new Date().toISOString().slice(0, 10);
+            AsyncStorage.setItem(STREAK_KEY, JSON.stringify({ lastDate: today, streak: curr.streak })).catch(() => {});
+            return curr;
+        });
     }, []);
 
     const updateScoutReadiness = useCallback((delta) => {

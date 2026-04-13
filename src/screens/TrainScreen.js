@@ -1,25 +1,28 @@
-// TrainScreen — AI Vision Engine (Production-Fixed for Expo SDK 50)
+// TrainScreen — AI Vision Engine (Nike Design Language)
 // Camera fix: use `Camera` from 'expo-camera' (legacy API, has takePictureAsync)
 // CameraView from expo-camera/next does NOT have takePictureAsync — that's why
 // real AI analysis was always falling back to simulation mode.
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, Dimensions, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Dimensions, ScrollView, Pressable, Animated , Platform } from 'react-native';
 import { Camera, CameraView } from 'expo-camera';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUser } from '../context/UserContext';
 import api from '../services/api';
+import { Tap, Fade, ProgressRing, CONDENSED, MONO } from '../ui';
 
-const C = { bg: '#050a14', cyan: '#06b6d4', orange: '#f97316', green: '#22c55e', red: '#ef4444', text: '#f1f5f9', muted: '#64748b', surf: 'rgba(255,255,255,0.05)' };
 const { width: W } = Dimensions.get('window');
 
 const SPORTS = [
-    { key: 'vertical_jump', label: 'VJ',      icon: '⬆️' },
-    { key: 'snatch',        label: 'Snatch',   icon: '🏋️' },
-    { key: 'sprint',        label: 'Sprint',   icon: '💨' },
-    { key: 'javelin',       label: 'Javelin',  icon: '🏹' },
-    { key: 'cricket_bat',   label: 'Cricket',  icon: '🏏' },
-    { key: 'squat',         label: 'Squat',    icon: '🦵' },
-    { key: 'push_up',       label: 'Push Up',  icon: '💪' },
-    { key: 'pull_up',       label: 'Pull Up',  icon: '🔝' },
+    { key: 'general',       label: 'GENERAL' },
+    { key: 'vertical_jump', label: 'VJ' },
+    { key: 'squat',         label: 'SQUAT' },
+    { key: 'push_up',       label: 'PUSH UP' },
+    { key: 'pull_up',       label: 'PULL UP' },
+    { key: 'sprint',        label: 'SPRINT' },
+    { key: 'snatch',        label: 'SNATCH' },
+    { key: 'javelin',       label: 'JAVELIN' },
+    { key: 'cricket_bat',   label: 'CRICKET' },
 ];
 
 const SPORT_RANGES = {
@@ -70,10 +73,12 @@ function simulateFrame(sport) {
 
 const Q_COLORS = { elite: '#22c55e', good: '#06b6d4', average: '#f97316', poor: '#ef4444' };
 
-export default function TrainScreen({ showToast, navigation }) {
-    const { addXp } = useUser();
+export default function TrainScreen({ showToast, navigation, route }) {
+    const ins = useSafeAreaInsets();
+    const { addXp, userData } = useUser();
     const [permission, setPermission] = useState(null);
-    const [sport, setSport] = useState('vertical_jump');
+    const initialSport = route?.params?.sport || 'general';
+    const [sport, setSport] = useState(initialSport);
     const [isActive, setIsActive] = useState(false);
     const [metrics, setMetrics] = useState(null);
     const [sessionId, setSessionId] = useState(null);
@@ -84,19 +89,40 @@ export default function TrainScreen({ showToast, navigation }) {
     const [summary, setSummary] = useState(null);
     const [analysisMode, setAnalysisMode] = useState('sim'); // 'real' | 'sim' | 'no_pose'
     const intervalRef = useRef(null);
+    const simIntervalRef = useRef(null);
     const sessionRef = useRef(null);
     const cameraRef = useRef(null);       // CameraView ref for takePictureAsync
     const isCapturingRef = useRef(false); // prevents overlapping captures
     const lastPhaseRef = useRef(null);
+    const analysisModeRef = useRef('sim');
     const [repCount, setRepCount] = useState(0);
+
+    // #3 Bouncy CTA on mount
+    const ctaBounce = useRef(new Animated.Value(0.85)).current;
+    useEffect(() => {
+        Animated.spring(ctaBounce, { toValue: 1, useNativeDriver: true, speed: 4, bounciness: 14 }).start();
+    }, []);
 
     // Request camera permission on mount
     useEffect(() => {
         Camera.requestCameraPermissionsAsync().then(({ status }) => {
             setPermission({ granted: status === 'granted' });
         });
-        return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+        return () => {
+            if (intervalRef.current) clearInterval(intervalRef.current);
+            if (simIntervalRef.current) clearInterval(simIntervalRef.current);
+        };
     }, []);
+
+    const requestPermission = async () => {
+        const { status } = await Camera.requestCameraPermissionsAsync();
+        setPermission({ granted: status === 'granted' });
+    };
+
+    // Update sport when navigated to with params (e.g., from GhostSkeleton)
+    useEffect(() => {
+        if (route?.params?.sport) setSport(route.params.sport);
+    }, [route?.params?.sport]);
 
     // Separate ref for the result polling interval
     const resultIntervalRef = useRef(null);
@@ -111,7 +137,12 @@ export default function TrainScreen({ showToast, navigation }) {
     };
 
     const startSession = async () => {
-        const sData = await api.startSession('athlete_01', sport);
+        // Clear any existing intervals from a previous session
+        if (intervalRef.current) clearInterval(intervalRef.current);
+        if (simIntervalRef.current) clearInterval(simIntervalRef.current);
+        if (resultIntervalRef.current) clearInterval(resultIntervalRef.current);
+
+        const sData = await api.startSession(userData?.avatarId || 'athlete_01', sport);
         const sid = sData?.session_id || null;
         setSessionId(sid);
         sessionRef.current = sid;
@@ -120,56 +151,43 @@ export default function TrainScreen({ showToast, navigation }) {
         setScoreHistory([]);
         setShowSummary(false);
         setSummary(null);
-        setAnalysisMode('sim');
+        setAnalysisMode('waiting');
+        analysisModeRef.current = 'waiting';
         setRepCount(0);
         lastPhaseRef.current = null;
 
-        // ── FRAME CAPTURE LOOP (every 4s) ──────────────────────────────────
-        // Fire-and-forget: captures JPEG → sends to server → returns instantly (202).
-        // Server queues MediaPipe analysis. Results come via the POLLING loop below.
-        intervalRef.current = setInterval(async () => {
+        // ── FRAME CAPTURE ────────────────────────────────────────────────────
+        const captureAndSend = async () => {
             try {
                 if (cameraRef.current && !isCapturingRef.current && sessionRef.current) {
                     isCapturingRef.current = true;
                     const photo = await cameraRef.current.takePictureAsync({
                         base64: true,
-                        quality: 0.1,        // ~8-15KB JPEG — enough for MediaPipe
-                        skipProcessing: true,
+                        quality: 0.4,
+                        skipProcessing: false,
                     });
                     isCapturingRef.current = false;
-
                     if (photo?.base64) {
-                        // Fire and forget — DO NOT await the result here
+                        setFrameNum(n => n + 1);
                         api.sendFrame(sessionRef.current, {
                             image_b64: photo.base64,
                             sport,
                             form_score: 0, form_quality: 'unknown', primary_feedback: ''
-                        }).catch(() => { });
+                        }).catch(() => {});
                     }
                 }
             } catch {
                 isCapturingRef.current = false;
             }
-        }, 4000); // capture every 4s
+        };
 
-        // ── SIMULATED FRAME LOOP (every 2s) ─────────────────────────────────
-        // Keeps UI ticking with simulated data while real analysis is in flight.
-        // When real results arrive (poll below), they override the simulated values.
-        const simIntervalRef = setInterval(() => {
-            setMetrics(prev => {
-                // Only use simulation if we haven't received real data yet
-                if (analysisMode === 'real') return prev;
-                const frame = simulateFrame(sport);
-                setFrameNum(n => n + 1);
-                setScoreHistory(h => {
-                    const next = [...h, frame.form_score];
-                    if (next.length > 30) next.shift();
-                    setAvgScore(Math.round(next.reduce((a, b) => a + b, 0) / next.length));
-                    return next;
-                });
-                return frame;
-            });
-        }, 2000);
+        // Capture first frame after 1.5s (camera needs time to initialize)
+        setTimeout(captureAndSend, 1500);
+        // Then every 3s
+        intervalRef.current = setInterval(captureAndSend, 3000);
+
+        // Simulation disabled — only real AI data shown.
+        // If no pose detected, UI shows "NO POSE" instead of fake numbers.
 
         // ── RESULT POLLING LOOP (every 3s) ─────────────────────────────────
         // Polls /latest-result → when AI finishes, real metrics appear in UI.
@@ -178,6 +196,7 @@ export default function TrainScreen({ showToast, navigation }) {
             try {
                 const result = await api.getLatestResult(sessionRef.current);
                 if (result?.pose_detected && result.form_score > 0) {
+                    // Real AI result — update UI
                     checkRep(result.phase);
                     const frame = {
                         form_score: result.form_score,
@@ -194,6 +213,7 @@ export default function TrainScreen({ showToast, navigation }) {
                     };
                     setMetrics(frame);
                     setAnalysisMode('real');
+                    analysisModeRef.current = 'real';
                     setFrameNum(n => n + 1);
                     setScoreHistory(h => {
                         const next = [...h, result.form_score];
@@ -201,21 +221,32 @@ export default function TrainScreen({ showToast, navigation }) {
                         setAvgScore(Math.round(next.reduce((a, b) => a + b, 0) / next.length));
                         return next;
                     });
+                } else if (result?.pose_detected === false) {
+                    // Backend processed frame but no person detected
+                    setAnalysisMode('no_pose');
+                    analysisModeRef.current = 'no_pose';
                 } else if (result?.data_source === 'none') {
-                    setAnalysisMode('sim'); // no AI result yet
+                    // No frames analyzed yet — waiting
+                    if (analysisModeRef.current !== 'real') {
+                        setAnalysisMode('waiting');
+                        analysisModeRef.current = 'waiting';
+                    }
                 }
-            } catch { }
-        }, 3000);
+            } catch (e) {
+                // If we can't reach the server, show error state
+                if (analysisModeRef.current !== 'real') {
+                    setAnalysisMode('error');
+                    analysisModeRef.current = 'error';
+                }
+            }
+        }, 2000);
 
-        // Store simInterval in a ref for cleanup
-        if (!intervalRef._simRef) intervalRef._simRef = {};
-        intervalRef._simRef.current = simIntervalRef;
     };
 
     const endSession = async () => {
         if (intervalRef.current) clearInterval(intervalRef.current);
         if (resultIntervalRef.current) clearInterval(resultIntervalRef.current);
-        if (intervalRef._simRef?.current) clearInterval(intervalRef._simRef.current);
+        if (simIntervalRef.current) clearInterval(simIntervalRef.current);
         setIsActive(false);
         setMetrics(null);
 
@@ -244,20 +275,26 @@ export default function TrainScreen({ showToast, navigation }) {
     // ── Permissions ─────────────────────────────────────────────────────────────
 
     if (!permission) {
-        return <View style={s.center}><Text style={s.mutedText}>Loading camera...</Text></View>;
+        return (
+            <View style={s.center}>
+                <Text style={s.mutedText}>Loading camera...</Text>
+            </View>
+        );
     }
     if (!permission.granted) {
         return (
-            <SafeAreaView style={[s.safe, { alignItems: 'center', justifyContent: 'center', padding: 24 }]}>
-                <Text style={{ fontSize: 40, marginBottom: 16 }}>📷</Text>
-                <Text style={s.title}>Camera Access Required</Text>
-                <Text style={[s.subtitle, { textAlign: 'center', marginBottom: 24 }]}>
+            <View style={[s.root, { paddingTop: ins.top, paddingBottom: ins.bottom, alignItems: 'center', justifyContent: 'center', padding: 24 }]}>
+                <Text style={{ fontSize: 13, color: '#4b5563', letterSpacing: 3, fontWeight: '800', marginBottom: 16 }}>CAMERA ACCESS</Text>
+                <Text style={s.title}>PERMISSION REQUIRED</Text>
+                <Text style={[s.subtitle, { textAlign: 'center', marginBottom: 24, marginTop: 8 }]}>
                     Camera access is needed to perform real-time biomechanics analysis.
                 </Text>
-                <TouchableOpacity style={s.startBtn} onPress={requestPermission}>
-                    <Text style={s.startBtnText}>GRANT CAMERA ACCESS</Text>
-                </TouchableOpacity>
-            </SafeAreaView>
+                <Tap onPress={requestPermission}>
+                    <LinearGradient colors={['#0c4a6e','#0891b2','#06b6d4']} start={{x:0,y:0}} end={{x:1,y:1}} style={s.gradientBtn}>
+                        <Text style={s.gradientBtnText}>GRANT CAMERA ACCESS</Text>
+                    </LinearGradient>
+                </Tap>
+            </View>
         );
     }
 
@@ -266,157 +303,191 @@ export default function TrainScreen({ showToast, navigation }) {
     if (showSummary && summary) {
         const qColor = Q_COLORS[summary.avgScore >= 90 ? 'elite' : summary.avgScore >= 75 ? 'good' : summary.avgScore >= 55 ? 'average' : 'poor'];
         return (
-            <SafeAreaView style={[s.safe, { justifyContent: 'center', padding: 24 }]}>
-                <Text style={{ fontSize: 48, textAlign: 'center', marginBottom: 8 }}>🎯</Text>
-                <Text style={[s.title, { textAlign: 'center', marginBottom: 24 }]}>Session Complete</Text>
-                <View style={s.summaryCard}>
-                    <SummaryRow label="Avg Form Score" value={`${summary.avgScore}%`} color={qColor} />
-                    <SummaryRow label="Peak Score" value={`${summary.peakScore}%`} color={C.green} />
-                    <SummaryRow label="Peak Jump Height" value={summary.peakVj > 0 ? `${summary.peakVj.toFixed(1)} cm` : '--'} color={C.orange} />
-                    <SummaryRow label="Reps Counted" value={String(summary.reps ?? 0)} color={C.orange} />
-                    <SummaryRow label="Frames Analyzed" value={String(summary.frames)} color="#a78bfa" isLast />
-                    <View style={{ alignItems: 'center', marginTop: 16 }}>
-                        <View style={s.xpPill}>
-                            <Text style={s.xpText}>+{summary.xpEarned} XP Earned!</Text>
+            <View style={[s.root, { paddingTop: ins.top, paddingBottom: ins.bottom }]}>
+                <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 24, paddingBottom: ins.bottom + 20 }} showsVerticalScrollIndicator={false}>
+                    <Fade>
+                        <Text style={s.summaryHeadline}>SESSION{'\n'}COMPLETE</Text>
+                    </Fade>
+
+                    <Fade delay={100} style={{ alignItems: 'center', marginVertical: 32 }}>
+                        <View style={{ position: 'relative' }}>
+                            <ProgressRing pct={summary.avgScore} color={qColor} size={160} stroke={6} />
+                            <View style={s.ringInner}>
+                                <Text style={[s.ringScore, { color: qColor, fontFamily: CONDENSED }]}>{summary.avgScore}</Text>
+                                <Text style={s.ringLabel}>SCORE</Text>
+                            </View>
                         </View>
-                    </View>
-                </View>
-                <TouchableOpacity style={s.startBtn} onPress={completeSummary}>
-                    <Text style={s.startBtnText}>SAVE TO BIO-PASSPORT</Text>
-                </TouchableOpacity>
-            </SafeAreaView>
+                    </Fade>
+
+                    <Fade delay={200}>
+                        <View style={s.summaryStats}>
+                            <SummaryRow label="Peak Score" value={`${summary.peakScore}%`} color="#22c55e" />
+                            <View style={s.thinDivider} />
+                            <SummaryRow label="Peak Jump Height" value={summary.peakVj > 0 ? `${summary.peakVj.toFixed(1)} cm` : '--'} color="#f97316" />
+                            <View style={s.thinDivider} />
+                            <SummaryRow label="Reps Counted" value={String(summary.reps ?? 0)} color="#f97316" />
+                            <View style={s.thinDivider} />
+                            <SummaryRow label="Frames Analyzed" value={String(summary.frames)} color="#a78bfa" />
+                        </View>
+
+                        <Text style={s.xpText}>+{summary.xpEarned} XP EARNED</Text>
+                    </Fade>
+
+                    <Fade delay={300}>
+                        <Tap onPress={completeSummary}>
+                            <LinearGradient colors={['#0c4a6e','#0891b2','#06b6d4']} start={{x:0,y:0}} end={{x:1,y:1}} style={s.gradientBtn}>
+                                <Text style={s.gradientBtnText}>SAVE</Text>
+                            </LinearGradient>
+                        </Tap>
+                    </Fade>
+                </ScrollView>
+            </View>
         );
     }
 
     // ── Setup Screen ─────────────────────────────────────────────────────────────
 
     if (!isActive) {
+        const sportLabel = SPORTS.find(sp => sp.key === sport)?.label || 'VERTICAL JUMP';
         return (
-            <SafeAreaView style={s.safe}>
-                <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
-                    <Text style={s.title}>AI Vision Engine</Text>
-                    <Text style={s.subtitle}>Select sport and start your session</Text>
+            <View style={[s.root, { paddingTop: ins.top }]}>
+                <ScrollView contentContainerStyle={{ paddingBottom: ins.bottom + 40 }} showsVerticalScrollIndicator={false}>
 
-                    <Text style={[s.sectionLabel, { marginTop: 24 }]}>SPORT MODE</Text>
-                    <View style={s.sportGrid}>
-                        {SPORTS.map((sp) => (
-                            <TouchableOpacity
-                                key={sp.key}
-                                style={[s.sportBtn, sport === sp.key && s.sportBtnActive]}
-                                onPress={() => setSport(sp.key)}
-                            >
-                                <Text style={s.sportIcon}>{sp.icon}</Text>
-                                <Text style={[s.sportLabel, sport === sp.key && { color: C.cyan }]}>{sp.label}</Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
+                    {/* Hero section — the sport is the visual focus */}
+                    <Fade style={s.setupHero}>
+                        <Text style={s.setupEyebrow}>ACTIVEBHARAT</Text>
+                        <Text style={s.setupTitle}>{sportLabel}</Text>
+                        <Text style={s.setupSub}>AI-powered biomechanics session</Text>
+                    </Fade>
 
-                    <View style={s.checklistCard}>
-                        <Text style={s.sectionLabel}>PRE-FLIGHT CHECK</Text>
+                    {/* Sport selector — horizontal tabs */}
+                    <Fade delay={80}>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.sportScroll}>
+                            {SPORTS.map((sp) => (
+                                <Tap key={sp.key} onPress={() => setSport(sp.key)} style={[s.sportItem, sport === sp.key && s.sportPill]} haptic={true}>
+                                    <Text style={[s.sportTab, sport === sp.key && s.sportTabActive]}>{sp.label}</Text>
+                                    {sport === sp.key && <View style={s.sportUnderline} />}
+                                </Tap>
+                            ))}
+                        </ScrollView>
+                    </Fade>
+
+                    {/* CTA — dominant, full bleed gradient */}
+                    <Fade delay={160}>
+                        <Animated.View style={{ transform: [{ scale: ctaBounce }] }}>
+                            <Tap onPress={startSession}>
+                                <LinearGradient colors={['#0c4a6e','#0891b2','#06b6d4']} start={{x:0,y:0}} end={{x:1,y:1}} style={s.setupCta}>
+                                    <Text style={s.setupCtaLabel}>TAP TO BEGIN</Text>
+                                    <Text style={s.setupCtaTitle}>START{'\n'}SESSION</Text>
+                                    <View style={s.setupCtaCircle}><Text style={s.setupCtaGo}>GO</Text></View>
+                                </LinearGradient>
+                            </Tap>
+                        </Animated.View>
+                    </Fade>
+
+                    {/* Tips — minimal, tucked at bottom */}
+                    <Fade delay={240} style={s.tipsSection}>
+                        <Text style={s.sectionLabel}>SETUP TIPS</Text>
                         {[
-                            'Sufficient lighting in the room',
-                            'Full body visible to camera',
-                            'Position camera at waist/hip height',
-                            'Wear form-fitting clothes for best tracking',
-                        ].map(item => (
-                            <View key={item} style={s.checkItem}>
-                                <Text style={{ color: C.cyan, fontSize: 14 }}>{'✓'}</Text>
-                                <Text style={s.checkText}>{item}</Text>
+                            'Good lighting — face a window',
+                            'Full body in frame — head to feet',
+                            'Phone at waist height, 2m away',
+                            'Fitted clothes for best tracking',
+                        ].map((item) => (
+                            <View key={item} style={s.tipRow}>
+                                <View style={s.tipDot} />
+                                <Text style={s.tipText}>{item}</Text>
                             </View>
                         ))}
-                    </View>
-
-                    <TouchableOpacity style={s.startBtn} onPress={startSession} activeOpacity={0.85}>
-                        <Text style={s.startBtnText}>INITIALIZE VISION ENGINE</Text>
-                    </TouchableOpacity>
-
-                    {/* Quick-access tool buttons */}
-                    <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-                        <TouchableOpacity
-                            style={[s.toolBtn, { flex: 1 }]}
-                            onPress={() => navigation?.navigate('HeartRate', { sessionId: sessionId || 'rppg_' + Date.now() })}
-                            activeOpacity={0.85}
-                        >
-                            <Text style={s.toolBtnIcon}>❤️</Text>
-                            <Text style={s.toolBtnLabel}>Heart Rate</Text>
-                            <Text style={s.toolBtnSub}>rPPG · Camera</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                            style={[s.toolBtn, { flex: 1 }]}
-                            onPress={() => navigation?.navigate('GhostSkeleton', { sport })}
-                            activeOpacity={0.85}
-                        >
-                            <Text style={s.toolBtnIcon}>👻</Text>
-                            <Text style={s.toolBtnLabel}>Ghost Form</Text>
-                            <Text style={s.toolBtnSub}>AI · Skeleton</Text>
-                        </TouchableOpacity>
-                    </View>
+                    </Fade>
                 </ScrollView>
-            </SafeAreaView>
+            </View>
         );
     }
 
     // ── Live Camera View ──────────────────────────────────────────────────────────
 
-    const qColor = metrics ? (Q_COLORS[metrics.form_quality] || C.cyan) : C.cyan;
-    const modeLabel = analysisMode === 'real' ? '🟢 REAL AI' : analysisMode === 'no_pose' ? '🟡 NO POSE' : '🔵 SIM';
+    const qColor = metrics ? (Q_COLORS[metrics.form_quality] || '#06b6d4') : '#06b6d4';
+    const modeLabel = analysisMode === 'real' ? 'REAL AI'
+        : analysisMode === 'no_pose' ? 'NO POSE'
+        : analysisMode === 'waiting' ? 'ANALYZING...'
+        : analysisMode === 'error' ? 'CONNECTION LOST'
+        : 'WAITING';
+    const modeColor = analysisMode === 'real' ? '#22c55e'
+        : analysisMode === 'no_pose' ? '#f97316'
+        : analysisMode === 'waiting' ? '#06b6d4'
+        : analysisMode === 'error' ? '#ef4444'
+        : '#64748b';
 
     return (
         <View style={s.cameraWrap}>
-            <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing={'front'} />
+            <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing={'back'} />
 
             {/* Top bar */}
-            <View style={s.camTopBar}>
-                <View style={s.recBadge}>
+            <View style={[s.camTopBar, { top: ins.top + 12 }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <View style={s.recDot} />
-                    <Text style={s.recText}>SYS.RECORDING</Text>
+                    <Text style={s.recText}>REC</Text>
                 </View>
-                <TouchableOpacity style={s.finishBtn} onPress={endSession}>
-                    <Text style={s.finishBtnText}>FINISH</Text>
-                </TouchableOpacity>
+                <Tap onPress={endSession}>
+                    <Text style={s.finishText}>FINISH</Text>
+                </Tap>
             </View>
 
             {/* Telemetry overlay */}
-            <View style={s.overlayMetrics}>
-                <Text style={s.overlayLabel}>{`FRAME: ${frameNum}  AVG: ${avgScore}%  ${modeLabel}`}</Text>
+            <View style={[s.overlayMetrics, { top: ins.top + 60 }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: modeColor, marginRight: 8 }} />
+                    <Text style={[s.overlayMode, { color: modeColor }]}>{modeLabel}</Text>
+                </View>
                 {metrics && (
                     <>
-                        <Text style={s.overlayMetric}>{`KNEE_L : ${metrics.knee_angle_l?.toFixed(0)}°`}</Text>
-                        <Text style={s.overlayMetric}>{`HIP_L  : ${metrics.hip_angle_l?.toFixed(0)}°`}</Text>
-                        <Text style={s.overlayMetric}>{`TRUNK  : ${metrics.trunk_lean?.toFixed(0)}°`}</Text>
-                        <Text style={s.overlayMetric}>{`SYM    : ${metrics.limb_symmetry_idx?.toFixed(2)}`}</Text>
-                        {metrics.estimated_jump_height > 0 && (
-                            <Text style={s.overlayMetric}>{`EST_VJ : ${metrics.estimated_jump_height?.toFixed(1)} cm`}</Text>
-                        )}
+                        <Text style={s.overlayAngle}>{`KNEE  ${metrics.knee_angle_l?.toFixed(0)}°`}</Text>
+                        <Text style={s.overlayAngle}>{`HIP   ${metrics.hip_angle_l?.toFixed(0)}°`}</Text>
+                        <Text style={s.overlayAngle}>{`TRUNK ${metrics.trunk_lean?.toFixed(0)}°`}</Text>
+                        <Text style={s.overlayAngle}>{`SYM   ${metrics.limb_symmetry_idx?.toFixed(2)}`}</Text>
                     </>
                 )}
             </View>
 
             {/* Bottom HUD */}
-            <View style={[s.camBottomHUD, { borderLeftColor: qColor }]}>
-                <View style={{ flex: 1 }}>
-                    <Text style={[s.hudLabel, { color: qColor }]}>LIVE CORRECTION</Text>
-                    <Text style={s.hudFeedback} numberOfLines={2}>
-                        {metrics?.primary_feedback || 'Analyzing posture...'}
-                    </Text>
-                </View>
-                <View style={{ alignItems: 'center', marginHorizontal: 12 }}>
-                    <Text style={s.hudSyncLabel}>REPS</Text>
-                    <Text style={[s.hudScore, { color: C.orange, fontSize: 22 }]}>{repCount}</Text>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={s.hudSyncLabel}>FORM</Text>
-                    <Text style={[s.hudScore, { color: qColor }]}>{metrics?.form_score ?? '--'}%</Text>
+            <View style={[s.camBottomHUD, { bottom: ins.bottom + 20 }]}>
+                <View style={[s.hudTopLine, { backgroundColor: analysisMode === 'real' ? qColor : modeColor }]} />
+                <View style={s.hudContent}>
+                    <View style={{ flex: 1 }}>
+                        <Text style={[s.hudLabel, { color: analysisMode === 'real' ? qColor : modeColor }]}>
+                            {analysisMode === 'real' ? 'LIVE CORRECTION'
+                                : analysisMode === 'no_pose' ? 'NO PERSON DETECTED'
+                                : analysisMode === 'error' ? 'CONNECTION ERROR'
+                                : `ANALYZING · FRAME ${frameNum}`}
+                        </Text>
+                        <Text style={s.hudFeedback} numberOfLines={2}>
+                            {analysisMode === 'no_pose'
+                                ? 'Stand back — full body must be visible, head to feet'
+                                : analysisMode === 'error'
+                                ? 'Check your connection. Frames will be analyzed when reconnected.'
+                                : analysisMode === 'real'
+                                ? (metrics?.primary_feedback || 'Great form!')
+                                : 'Point camera at your full body. Stay still...'}
+                        </Text>
+                    </View>
+                    <View style={{ alignItems: 'center', marginHorizontal: 12 }}>
+                        <Text style={s.hudStatLabel}>REPS</Text>
+                        <Text style={[s.hudStatNum, { color: '#f97316' }]}>{repCount}</Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={s.hudStatLabel}>FORM</Text>
+                        <Text style={[s.hudFormScore, { color: qColor }]}>{metrics?.form_score ?? '--'}%</Text>
+                    </View>
                 </View>
             </View>
         </View>
     );
 }
 
-function SummaryRow({ label, value, color, isLast }) {
+function SummaryRow({ label, value, color }) {
     return (
-        <View style={[s.summaryRow, isLast && { borderBottomWidth: 0 }]}>
+        <View style={s.summaryRow}>
             <Text style={s.sumLabel}>{label}</Text>
             <Text style={[s.sumVal, { color }]}>{value}</Text>
         </View>
@@ -424,51 +495,74 @@ function SummaryRow({ label, value, color, isLast }) {
 }
 
 const s = StyleSheet.create({
-    safe: { flex: 1, backgroundColor: C.bg },
-    center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: C.bg },
-    title: { fontSize: 24, fontWeight: '900', color: C.text, letterSpacing: -0.5, marginBottom: 4 },
-    subtitle: { fontSize: 12, color: C.muted },
-    sectionLabel: { fontSize: 9, fontWeight: '800', color: C.muted, letterSpacing: 2, textTransform: 'uppercase', marginBottom: 10 },
-    mutedText: { color: C.muted, fontSize: 14 },
-    // Sport grid
-    sportGrid: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 24, gap: 8 },
-    sportBtn: { width: '22%', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 10, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-    sportBtnActive: { backgroundColor: 'rgba(6,182,212,0.15)', borderColor: 'rgba(6,182,212,0.5)' },
-    sportIcon: { fontSize: 20, marginBottom: 4 },
-    sportLabel: { fontSize: 9, fontWeight: '700', color: C.muted, textAlign: 'center' },
-    // Checklist
-    checklistCard: { backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 18, padding: 16, marginBottom: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
-    checkItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-    checkText: { fontSize: 12, fontWeight: '600', color: '#cbd5e1', marginLeft: 10, flex: 1 },
-    // Start button
-    startBtn: { backgroundColor: C.cyan, borderRadius: 18, padding: 18, alignItems: 'center', shadowColor: C.cyan, shadowOpacity: 0.35, shadowOffset: { width: 0, height: 8 }, shadowRadius: 20, elevation: 8 },
-    startBtnText: { color: '#000', fontWeight: '900', fontSize: 13, letterSpacing: 2 },
+    root: { flex: 1, backgroundColor: '#000' },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
+    mutedText: { color: '#64748b', fontSize: 14 },
+
+    // Setup hero
+    setupHero: { alignItems: 'center', paddingTop: 40, paddingBottom: 32 },
+    setupEyebrow: { fontSize: 10, fontWeight: '800', color: '#4b5563', letterSpacing: 4, marginBottom: 16 },
+    setupTitle: { fontSize: 52, fontWeight: '900', color: '#fff', letterSpacing: -1, fontFamily: CONDENSED, textAlign: 'center' },
+    setupSub: { fontSize: 13, color: '#4b5563', fontWeight: '400', marginTop: 8 },
+
+    // Sport tabs
+    sportScroll: { paddingHorizontal: 24, paddingBottom: 4, marginBottom: 24 },
+    sportItem: { marginRight: 24 },
+    sportPill: { backgroundColor: 'rgba(6,182,212,0.12)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 4, marginRight: 16 },
+    sportTab: { fontSize: 13, fontWeight: '700', color: '#4b5563', letterSpacing: 2, paddingBottom: 8 },
+    sportTabActive: { color: '#fff' },
+    sportUnderline: { height: 2, backgroundColor: '#06b6d4', borderRadius: 1 },
+
+    // Setup CTA
+    setupCta: { marginHorizontal: 20, borderRadius: 8, paddingVertical: 40, paddingHorizontal: 28, marginBottom: 36, position: 'relative',
+        ...Platform.select({ android: { elevation: 16 }, ios: { shadowColor: '#06b6d4', shadowOpacity: 0.35, shadowOffset: { width: 0, height: 14 }, shadowRadius: 28 } }),
+    },
+    setupCtaLabel: { fontSize: 10, fontWeight: '700', color: 'rgba(255,255,255,0.35)', letterSpacing: 4, marginBottom: 8 },
+    setupCtaTitle: { fontSize: 48, fontWeight: '900', color: '#fff', lineHeight: 50, letterSpacing: -1, fontFamily: CONDENSED },
+    setupCtaCircle: { position: 'absolute', bottom: 28, right: 28, width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
+    setupCtaGo: { fontSize: 16, fontWeight: '900', color: '#fff', letterSpacing: 1 },
+
+    // Tips
+    tipsSection: { paddingHorizontal: 24 },
+    sectionLabel: { fontSize: 11, fontWeight: '800', color: '#374151', letterSpacing: 3, textTransform: 'uppercase', marginBottom: 14 },
+    tipRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+    tipDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: '#374151', marginRight: 12 },
+    tipText: { fontSize: 13, color: '#6b7280', fontWeight: '400', lineHeight: 18 },
+
+    // Gradient CTA (used in permission + summary)
+    gradientBtn: { borderRadius: 6, paddingVertical: 18, alignItems: 'center', marginHorizontal: 20 },
+    gradientBtnText: { color: '#fff', fontWeight: '900', fontSize: 14, letterSpacing: 3, fontFamily: CONDENSED },
+
     // Camera view
     cameraWrap: { flex: 1, backgroundColor: '#000' },
-    camTopBar: { position: 'absolute', top: 50, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, zIndex: 10 },
-    recBadge: { flexDirection: 'row', alignItems: 'center' },
-    recDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.red, marginRight: 6 },
-    recText: { color: C.text, fontSize: 10, fontWeight: '800', letterSpacing: 2 },
-    finishBtn: { backgroundColor: 'rgba(239,68,68,0.2)', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 7, borderWidth: 1, borderColor: 'rgba(239,68,68,0.5)' },
-    finishBtnText: { color: C.red, fontWeight: '900', fontSize: 10, letterSpacing: 2 },
-    overlayMetrics: { position: 'absolute', top: 100, left: 16, zIndex: 10 },
-    overlayLabel: { color: 'rgba(6,182,212,0.6)', fontSize: 8, marginBottom: 8 },
-    overlayMetric: { color: C.cyan, fontSize: 10, fontWeight: '700', marginBottom: 4, backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 },
-    camBottomHUD: { position: 'absolute', bottom: 100, left: 16, right: 16, backgroundColor: 'rgba(0,0,0,0.82)', borderRadius: 20, padding: 16, borderLeftWidth: 4, flexDirection: 'row', alignItems: 'center', zIndex: 10 },
+    camTopBar: { position: 'absolute', left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, zIndex: 10 },
+    recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#ef4444', marginRight: 8 },
+    recText: { color: '#fff', fontSize: 12, fontWeight: '800', letterSpacing: 2 },
+    finishText: { color: '#ef4444', fontWeight: '900', fontSize: 13, letterSpacing: 2 },
+
+    overlayMetrics: { position: 'absolute', left: 16, zIndex: 10 },
+    overlayMode: { fontSize: 10, fontWeight: '800', letterSpacing: 1 },
+    overlayAngle: { color: '#06b6d4', fontSize: 11, fontWeight: '700', marginBottom: 4, fontFamily: MONO, backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 },
+
+    // Bottom HUD
+    camBottomHUD: { position: 'absolute', left: 16, right: 16, backgroundColor: 'rgba(0,0,0,0.85)', borderRadius: 16, overflow: 'hidden', zIndex: 10 },
+    hudTopLine: { height: 2, width: '100%' },
+    hudContent: { flexDirection: 'row', alignItems: 'center', padding: 16 },
     hudLabel: { fontSize: 9, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 4 },
-    hudFeedback: { color: C.text, fontWeight: '800', fontSize: 13 },
-    hudSyncLabel: { fontSize: 8, color: C.muted, fontWeight: '700', letterSpacing: 2 },
-    hudScore: { fontSize: 28, fontWeight: '900' },
+    hudFeedback: { color: '#f1f5f9', fontWeight: '700', fontSize: 15 },
+    hudStatLabel: { fontSize: 8, color: '#64748b', fontWeight: '700', letterSpacing: 2 },
+    hudStatNum: { fontSize: 22, fontWeight: '900' },
+    hudFormScore: { fontSize: 36, fontWeight: '900', fontFamily: CONDENSED },
+
     // Summary
-    summaryCard: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 20, padding: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', marginBottom: 24 },
-    summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' },
-    sumLabel: { fontSize: 13, color: C.muted, fontWeight: '600' },
-    sumVal: { fontSize: 20, fontWeight: '900' },
-    xpPill: { backgroundColor: 'rgba(6,182,212,0.18)', borderRadius: 99, paddingHorizontal: 20, paddingVertical: 10, borderWidth: 1, borderColor: 'rgba(6,182,212,0.4)' },
-    xpText: { color: C.cyan, fontWeight: '900', fontSize: 16 },
-    // Tool buttons (Heart Rate, Ghost Form)
-    toolBtn: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 16, paddingVertical: 14, paddingHorizontal: 12, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-    toolBtnIcon: { fontSize: 22, marginBottom: 5 },
-    toolBtnLabel: { fontSize: 12, fontWeight: '800', color: C.text, marginBottom: 2 },
-    toolBtnSub: { fontSize: 9, fontWeight: '700', color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5 },
+    summaryHeadline: { fontSize: 40, fontWeight: '900', color: '#fff', letterSpacing: 2, fontFamily: CONDENSED, textAlign: 'center', lineHeight: 44 },
+    ringInner: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
+    ringScore: { fontSize: 48, fontWeight: '900' },
+    ringLabel: { fontSize: 9, fontWeight: '700', color: '#4b5563', letterSpacing: 3, marginTop: -4 },
+    summaryStats: { marginBottom: 20 },
+    summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14 },
+    sumLabel: { fontSize: 13, color: '#6b7280', fontWeight: '400' },
+    sumVal: { fontSize: 20, fontWeight: '900', fontFamily: CONDENSED },
+    thinDivider: { height: 1, backgroundColor: '#1a1a1a' },
+    xpText: { fontSize: 18, fontWeight: '900', color: '#06b6d4', textAlign: 'center', letterSpacing: 2, marginBottom: 32, fontFamily: CONDENSED },
 });

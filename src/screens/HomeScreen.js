@@ -1,386 +1,231 @@
-// HomeScreen — Production v3
-// Full redesign: Fitness Score card, Daily Tracker, Content Grid,
-// AI Trainer banner, Featured banners, Influencer section
-import React, { useEffect, useState, useCallback } from 'react';
+// HomeScreen — Nike-inspired. Pure black canvas. Bold type. Premium polish.
+
+import React, { useEffect, useState, useRef } from 'react';
 import {
-    View, Text, ScrollView, StyleSheet, TouchableOpacity,
-    SafeAreaView, ActivityIndicator, Dimensions,
+    View, Text, ScrollView, StyleSheet, Animated,
+    Dimensions, Platform, StatusBar, RefreshControl,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useUser } from '../context/UserContext';
 import api from '../services/api';
-import { C } from '../styles/colors';
-import {
-    DAILY_TRACKER_DEFAULTS,
-    HOME_CONTENT_GRID,
-    FEATURED_BANNERS,
-    TRENDING_CREATORS,
-} from '../data/constants';
+import { DAILY_TRACKER_DEFAULTS } from '../data/constants';
+import { Tap, Fade, CountUp, ActionRow, Divider, GradientDivider, PulsingDot, ProgressRing, CONDENSED, MONO } from '../ui';
 
-const { width: SW } = Dimensions.get('window');
-const TODAY_KEY = `@daily_tracker_${new Date().toISOString().slice(0, 10)}`;
+const { width: W } = Dimensions.get('window');
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function FitnessScoreCard({ fitnessScore, streak }) {
-    const level     = fitnessScore?.level || 0;
-    const score     = fitnessScore?.score || 0;
-    const label     = fitnessScore?.label || 'Not Tested';
-    const bandColor = fitnessScore?.color || C.muted;
-
-    return (
-        <View style={sc.scoreCard}>
-            <View style={sc.scoreLeft}>
-                <Text style={sc.scoreTitle}>My Fitness</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginTop: 4 }}>
-                    <Text style={[sc.scorePts, { color: bandColor }]}>{score}</Text>
-                    <Text style={sc.scorePtsSuffix}> pts</Text>
-                </View>
-                <View style={[sc.levelBadge, { backgroundColor: bandColor + '25', borderColor: bandColor + '60' }]}>
-                    <Text style={[sc.levelText, { color: bandColor }]}>
-                        {level > 0 ? `L${level} · ${label}` : 'Take Fitness Test →'}
-                    </Text>
-                </View>
-            </View>
-            <View style={sc.scoreRight}>
-                <View style={[sc.ring, { borderColor: bandColor + '60' }]}>
-                    <Text style={[sc.ringNum, { color: bandColor }]}>{level > 0 ? `L${level}` : '—'}</Text>
-                </View>
-                <View style={sc.streakPill}>
-                    <Text style={sc.streakText}>🔥 {streak}d</Text>
-                </View>
-            </View>
-        </View>
-    );
+function greet() {
+    const h = new Date().getHours();
+    return h < 5 ? 'Late night' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
 }
 
-function TrackerRow({ icon, label, current, goal, unit }) {
-    const pct = goal > 0 ? Math.min(1, current / goal) : 0;
-    const isOver = current >= goal;
-    const barColor = isOver ? C.green : C.cyan;
-
-    return (
-        <View style={sc.trackerRow}>
-            <Text style={sc.trackerIcon}>{icon}</Text>
-            <View style={{ flex: 1 }}>
-                <View style={sc.trackerLabelRow}>
-                    <Text style={sc.trackerLabel}>{label}</Text>
-                    <Text style={[sc.trackerVal, { color: isOver ? C.green : C.text }]}>
-                        {typeof current === 'number' && current % 1 !== 0
-                            ? current.toFixed(2)
-                            : current
-                        }
-                        <Text style={sc.trackerUnit}> / {goal} {unit}</Text>
-                    </Text>
-                </View>
-                <View style={sc.trackerBarBg}>
-                    <View style={[sc.trackerBarFill, { width: `${pct * 100}%`, backgroundColor: barColor }]} />
-                </View>
-            </View>
-        </View>
-    );
+function motivation(streak) {
+    if (streak >= 14) return "You're on fire. Keep it up.";
+    if (streak >= 7) return "A full week. That's real consistency.";
+    if (streak >= 3) return "Building momentum. Stay with it.";
+    if (streak >= 1) return "Yesterday was good. Make today better.";
+    return "Every champion started with one session.";
 }
 
-function ContentTile({ item, onPress }) {
-    return (
-        <TouchableOpacity style={sc.tile} onPress={() => onPress(item)} activeOpacity={0.82}>
-            <View style={[sc.tileIcon, { backgroundColor: item.color + '22' }]}>
-                <Text style={sc.tileEmoji}>{item.emoji}</Text>
-            </View>
-            <Text style={sc.tileLabel}>{item.label}</Text>
-        </TouchableOpacity>
-    );
-}
+// ── Animated bar ─────────────────────────────────────────────────────────────
 
-function FeaturedBanner({ banner, onPress }) {
-    return (
-        <TouchableOpacity
-            style={sc.bannerWrap}
-            activeOpacity={0.85}
-            onPress={() => banner.route && onPress(banner.route)}
-        >
-            <LinearGradient colors={banner.colors} style={sc.bannerGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                {banner.badge && (
-                    <View style={sc.bannerBadge}>
-                        <Text style={sc.bannerBadgeText}>{banner.badge}</Text>
-                    </View>
-                )}
-                <Text style={sc.bannerTitle}>{banner.title}</Text>
-                <Text style={sc.bannerSub}>{banner.subtitle}</Text>
-            </LinearGradient>
-        </TouchableOpacity>
-    );
-}
-
-function CreatorCard({ creator, followed, onFollow }) {
-    return (
-        <View style={sc.creatorCard}>
-            <View style={[sc.creatorAvatar, { backgroundColor: creator.color }]}>
-                <Text style={sc.creatorInitials}>{creator.initials}</Text>
-            </View>
-            <Text style={sc.creatorName} numberOfLines={1}>{creator.name}</Text>
-            <Text style={sc.creatorHandle} numberOfLines={1}>{creator.handle}</Text>
-            <TouchableOpacity
-                style={[sc.followBtn, followed && sc.followBtnActive]}
-                onPress={() => onFollow(creator.id)}
-                activeOpacity={0.8}
-            >
-                <Text style={[sc.followBtnText, followed && { color: C.bg }]}>
-                    {followed ? 'Following' : 'Follow'}
-                </Text>
-            </TouchableOpacity>
-        </View>
-    );
-}
-
-// ─── Main Screen ──────────────────────────────────────────────────────────────
-
-export default function HomeScreen({ navigation, showToast }) {
-    const { userData, fitnessScore } = useUser();
-    const { name, level, xp, xpRequired, streak } = userData;
-
-    const [apiStatus, setApiStatus]   = useState('checking');
-    const [tracker, setTracker]       = useState(DAILY_TRACKER_DEFAULTS);
-    const [followed, setFollowed]     = useState({});
-    const [creators, setCreators]     = useState(TRENDING_CREATORS);
-
-    // Load daily tracker from cache
+function Bar({ pct, color, delay }) {
+    const w = useRef(new Animated.Value(0)).current;
     useEffect(() => {
-        AsyncStorage.getItem(TODAY_KEY).then(raw => {
-            if (raw) { try { setTracker(JSON.parse(raw)); } catch (_) {} }
-        });
-        api.ping().then(ok => setApiStatus(ok ? 'online' : 'offline'));
-        api.getTrendingCreators().then(data => { if (data?.length) setCreators(data); });
-    }, []);
-
-    const handleTilePress = useCallback((item) => {
-        if (!item.route) {
-            showToast('Coming soon!');
-            return;
-        }
-        if (item.routeParams) {
-            navigation.navigate(item.route, item.routeParams);
-        } else {
-            navigation.navigate(item.route);
-        }
-    }, [navigation, showToast]);
-
-    const handleFollow = useCallback((creatorId) => {
-        setFollowed(prev => ({ ...prev, [creatorId]: !prev[creatorId] }));
-    }, []);
-
-    const trackerItems = Object.values(tracker);
-
+        Animated.timing(w, { toValue: pct, duration: 900, delay: delay + 200, useNativeDriver: false }).start();
+    }, [pct]);
     return (
-        <SafeAreaView style={sc.safe}>
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 30 }}>
-
-                {/* ── Header ── */}
-                <LinearGradient colors={['#1a1040', '#0f172a']} style={sc.header}>
-                    {/* API status */}
-                    <View style={[sc.apiBadge, {
-                        backgroundColor: apiStatus === 'online' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
-                        borderColor:     apiStatus === 'online' ? 'rgba(34,197,94,0.3)'  : 'rgba(239,68,68,0.3)',
-                    }]}>
-                        <View style={[sc.apiDot, { backgroundColor: apiStatus === 'online' ? C.green : apiStatus === 'checking' ? C.yellow : C.red }]} />
-                        <Text style={[sc.apiText, { color: apiStatus === 'online' ? C.green : apiStatus === 'checking' ? C.yellow : C.red }]}>
-                            {apiStatus === 'checking' ? 'Connecting…' : apiStatus === 'online' ? 'AI Server Online' : 'Offline Mode'}
-                        </Text>
-                    </View>
-
-                    {/* Greeting row */}
-                    <View style={sc.greetRow}>
-                        <View>
-                            <Text style={sc.greeting}>Hi, {name.split(' ')[0]} 👋</Text>
-                            <Text style={sc.greetSub}>Level {level} · {xp.toLocaleString()} XP</Text>
-                        </View>
-                        <View style={{ flexDirection: 'row', gap: 10 }}>
-                            <TouchableOpacity style={sc.headerIcon} onPress={() => navigation.navigate('FitnessTest')}>
-                                <Text style={{ fontSize: 18 }}>🏆</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={sc.headerIcon} onPress={() => navigation.navigate('Camera')}>
-                                <Text style={{ fontSize: 18 }}>🎙️</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-
-                    {/* Fitness Score Card */}
-                    <FitnessScoreCard fitnessScore={fitnessScore} streak={streak} />
-                </LinearGradient>
-
-                {/* ── Daily Tracker ── */}
-                <View style={sc.section}>
-                    <View style={sc.sectionHeader}>
-                        <Text style={sc.sectionTitle}>MY DAILY TRACKER</Text>
-                        <TouchableOpacity>
-                            <Text style={sc.customiseBtn}>Customise Plan ›</Text>
-                        </TouchableOpacity>
-                    </View>
-                    <View style={sc.trackerCard}>
-                        {trackerItems.map((item, i) => (
-                            <TrackerRow
-                                key={i}
-                                icon={item.icon}
-                                label={item.label}
-                                current={item.current}
-                                goal={item.goal}
-                                unit={item.unit}
-                            />
-                        ))}
-                    </View>
-                </View>
-
-                {/* ── Content Grid ── */}
-                <View style={sc.section}>
-                    <Text style={sc.sectionTitle}>EXPLORE</Text>
-                    <View style={sc.grid}>
-                        {HOME_CONTENT_GRID.map(item => (
-                            <ContentTile key={item.id} item={item} onPress={handleTilePress} />
-                        ))}
-                    </View>
-                </View>
-
-                {/* ── AI Trainer Banner ── */}
-                <View style={[sc.section, { paddingBottom: 0 }]}>
-                    <TouchableOpacity activeOpacity={0.88} onPress={() => navigation.navigate('Camera')}>
-                        <LinearGradient
-                            colors={['#312e81', '#0e7490']}
-                            style={sc.aiTrainerBanner}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 1 }}
-                        >
-                            <View>
-                                <View style={sc.aiTag}>
-                                    <Text style={sc.aiTagText}>🤖 AI TRAINER</Text>
-                                </View>
-                                <Text style={sc.aiTitle}>Real-time Biomechanics</Text>
-                                <Text style={sc.aiSub}>Analyse your form with MediaPipe AI</Text>
-                            </View>
-                            <View style={sc.aiBtn}>
-                                <Text style={sc.aiBtnText}>Start →</Text>
-                            </View>
-                        </LinearGradient>
-                    </TouchableOpacity>
-                </View>
-
-                {/* ── Featured Banners ── */}
-                <View style={sc.section}>
-                    <Text style={sc.sectionTitle}>FEATURED</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12 }}>
-                        {FEATURED_BANNERS.map(banner => (
-                            <FeaturedBanner
-                                key={banner.id}
-                                banner={banner}
-                                onPress={(route) => navigation.navigate(route)}
-                            />
-                        ))}
-                    </ScrollView>
-                </View>
-
-                {/* ── Trending Creators / Influencers ── */}
-                <View style={sc.section}>
-                    <View style={sc.sectionHeader}>
-                        <Text style={sc.sectionTitle}>INFLUENCER</Text>
-                        <TouchableOpacity onPress={() => navigation.navigate('SocialFeed')}>
-                            <Text style={sc.customiseBtn}>See All ›</Text>
-                        </TouchableOpacity>
-                    </View>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12 }}>
-                        {creators.map(c => (
-                            <CreatorCard
-                                key={c.id}
-                                creator={c}
-                                followed={!!followed[c.id]}
-                                onFollow={handleFollow}
-                            />
-                        ))}
-                    </ScrollView>
-                </View>
-
-            </ScrollView>
-        </SafeAreaView>
+        <View style={$.barTrack}>
+            <Animated.View style={[$.barFill, { backgroundColor: color, width: w.interpolate({ inputRange: [0,1], outputRange: ['0%','100%'] }) }]} />
+        </View>
     );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-const sc = StyleSheet.create({
-    safe:          { flex: 1, backgroundColor: C.bg },
-    header:        { padding: 20, paddingTop: 14, paddingBottom: 24 },
+// ── Main ─────────────────────────────────────────────────────────────────────
 
-    // API badge
-    apiBadge:      { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', borderRadius: 99, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, marginBottom: 16 },
-    apiDot:        { width: 6, height: 6, borderRadius: 3, marginRight: 6 },
-    apiText:       { fontSize: 10, fontWeight: '700' },
+export default function HomeScreen({ navigation }) {
+    const ins = useSafeAreaInsets();
+    const { userData, fitnessScore } = useUser();
+    const [online, setOnline] = useState(null);
+    const [refreshing, setRefreshing] = useState(false);
+    const [tracker, setTracker] = useState(DAILY_TRACKER_DEFAULTS);
+    const TK = `@dt_${new Date().toISOString().slice(0,10)}`;
+
+    const load = () => {
+        AsyncStorage.getItem(TK).then(r => { if(r) try{setTracker(JSON.parse(r))}catch(_){} });
+        api.ping().then(ok => setOnline(!!ok));
+    };
+    useEffect(load, []);
+    useEffect(() => { AsyncStorage.setItem(TK, JSON.stringify(tracker)).catch(()=>{}); }, [tracker]);
+
+    const onRefresh = () => { setRefreshing(true); load(); setTimeout(() => setRefreshing(false), 800); };
+
+    // #2 Breathing score ring glow
+    const ringGlow = useRef(new Animated.Value(0.8)).current;
+    useEffect(() => {
+        Animated.loop(
+            Animated.sequence([
+                Animated.timing(ringGlow, { toValue: 1, duration: 2000, useNativeDriver: true }),
+                Animated.timing(ringGlow, { toValue: 0.8, duration: 2000, useNativeDriver: true }),
+            ])
+        ).start();
+    }, []);
+
+    // #3 Bouncy CTA
+    const ctaBounce = useRef(new Animated.Value(0.85)).current;
+    useEffect(() => {
+        Animated.spring(ctaBounce, { toValue: 1, useNativeDriver: true, speed: 4, bounciness: 14 }).start();
+    }, []);
+
+    const sc = fitnessScore?.score || 0;
+    const scColor = fitnessScore?.color || '#06b6d4';
+    const first = userData.name?.split(' ')[0] || 'Athlete';
+    const daily = Object.values(tracker);
+
+    return (
+        <View style={[$.root, { paddingTop: ins.top }]}>
+            <StatusBar barStyle="light-content" backgroundColor="#000" translucent />
+            <ScrollView
+                showsVerticalScrollIndicator={false}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#333" progressBackgroundColor="#000" colors={['#06b6d4']} />}
+            >
+
+                {/* ═══ Top ═══ */}
+                <Fade style={$.top}>
+                    <Text style={$.brand}>ACTIVEBHARAT</Text>
+                    <PulsingDot color={online ? '#22c55e' : online === false ? '#ef4444' : '#facc15'} size={8} />
+                </Fade>
+
+                {/* ═══ Greeting ═══ */}
+                <Fade delay={40} style={$.greetSection}>
+                    <Text style={$.greetText}>{greet()}, <Text style={$.greetName}>{first}</Text></Text>
+                    <Text style={$.motivText}>{motivation(userData.streak || 0)}</Text>
+                </Fade>
+
+                {/* ═══ Hero ═══ */}
+                <Fade delay={100} style={$.hero}>
+                    <Animated.View style={[$.ringWrap, { opacity: ringGlow }]}>
+                        <ProgressRing pct={sc} color={scColor} size={150} stroke={6} />
+                        <View style={$.ringInner}>
+                            <CountUp to={sc} duration={1200} delay={400} style={[$.scoreNum, { color: scColor, fontFamily: CONDENSED }]} />
+                            <Text style={$.scoreUnit}>SCORE</Text>
+                        </View>
+                    </Animated.View>
+                </Fade>
+
+                {/* ═══ Stats ═══ */}
+                <Fade delay={160} style={$.statsRow}>
+                    <View style={$.stat}>
+                        <CountUp to={userData.bpi||0} duration={1000} delay={500} style={[$.statNum, { color: '#06b6d4' }]} />
+                        <Text style={$.statKey}>BPI</Text>
+                    </View>
+                    <View style={$.statDiv} />
+                    <View style={$.stat}>
+                        <CountUp to={userData.sessions||0} duration={800} delay={600} style={[$.statNum, { color: '#22c55e' }]} />
+                        <Text style={$.statKey}>SESSIONS</Text>
+                    </View>
+                    <View style={$.statDiv} />
+                    <View style={$.stat}>
+                        <CountUp to={userData.streak||0} duration={600} delay={700} style={[$.statNum, { color: '#f97316' }]} />
+                        <Text style={$.statKey}>STREAK</Text>
+                    </View>
+                </Fade>
+
+                {/* ═══ CTA ═══ */}
+                <Fade delay={240}>
+                    <Animated.View style={{ transform: [{ scale: ctaBounce }] }}>
+                        <Tap onPress={() => navigation.navigate('GhostSkeleton', { sport: userData.sport || 'general' })}>
+                            <LinearGradient colors={['#0c4a6e','#0891b2','#06b6d4']} start={{x:0,y:0}} end={{x:1,y:1}} style={$.cta}>
+                                <Text style={$.ctaEyebrow}>YOUR NEXT SESSION</Text>
+                                <Text style={$.ctaTitle}>START{'\n'}TRAINING</Text>
+                                <View style={$.ctaBtn}><Text style={$.ctaBtnText}>GO</Text></View>
+                            </LinearGradient>
+                        </Tap>
+                    </Animated.View>
+                </Fade>
+
+                {/* ═══ Actions ═══ */}
+                <Fade delay={320} style={$.actions}>
+                    <ActionRow label="HEART RATE" color="#ef4444" onPress={() => navigation.navigate('HeartRate', { sessionId: 'rppg_'+Date.now() })} />
+                    <GradientDivider color="#ef4444" />
+                    <ActionRow label="WEEKLY PLAN" color="#22c55e" onPress={() => navigation.navigate('TrainingPlan')} />
+                    <GradientDivider color="#22c55e" />
+                    <ActionRow label="NUTRITION" color="#f97316" onPress={() => navigation.navigate('Nutrition')} />
+                    <GradientDivider color="#f97316" />
+                    <ActionRow label="FITNESS TEST" color="#06b6d4" onPress={() => navigation.navigate('FitnessTest')} />
+                </Fade>
+
+                {/* ═══ Today ═══ */}
+                <Fade delay={400} style={$.today}>
+                    <Text style={$.todayHead}>TODAY</Text>
+                    {daily.slice(0, 5).map((t, i) => {
+                        const pct = t.goal > 0 ? Math.min(1, t.current / t.goal) : 0;
+                        const colors = ['#06b6d4','#f97316','#22c55e','#a855f7','#eab308'];
+                        const val = typeof t.current === 'number' && t.current % 1 ? t.current.toFixed(1) : t.current;
+                        return (
+                            <Fade key={i} delay={450 + i * 50}>
+                                <View style={$.metricRow}>
+                                    <Text style={$.metricLabel}>{t.label}</Text>
+                                    <Text style={$.metricVal}>{val}<Text style={$.metricGoal}> / {t.goal}</Text></Text>
+                                </View>
+                                <Bar pct={pct} color={colors[i]} delay={450 + i * 50} />
+                                {i < daily.slice(0,5).length - 1 && <View style={{ height: 16 }} />}
+                            </Fade>
+                        );
+                    })}
+                </Fade>
+
+                <View style={{ height: 40 }} />
+            </ScrollView>
+        </View>
+    );
+}
+
+// ── Styles ───────────────────────────────────────────────────────────────────
+
+const $ = StyleSheet.create({
+    root: { flex: 1, backgroundColor: '#000' },
+
+    top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingTop: 12, marginBottom: 12 },
+    brand: { fontSize: 11, fontWeight: '800', color: '#fff', letterSpacing: 3 },
+    liveDot: { width: 8, height: 8, borderRadius: 4 },
 
     // Greeting
-    greetRow:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 },
-    greeting:      { fontSize: 22, fontWeight: '900', color: C.text },
-    greetSub:      { fontSize: 11, color: C.muted, marginTop: 2, fontWeight: '600' },
-    headerIcon:    { width: 38, height: 38, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center' },
+    greetSection: { paddingHorizontal: 24, marginBottom: 8 },
+    greetText: { fontSize: 22, fontWeight: '400', color: '#9ca3af' },
+    greetName: { fontWeight: '800', color: '#fff' },
+    motivText: { fontSize: 13, color: '#4b5563', fontWeight: '400', marginTop: 6, fontStyle: 'italic' },
 
-    // Fitness Score Card
-    scoreCard:     { backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 18, padding: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderColor: C.border2 },
-    scoreLeft:     { flex: 1 },
-    scoreTitle:    { fontSize: 11, color: C.muted, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase' },
-    scorePts:      { fontSize: 36, fontWeight: '900' },
-    scorePtsSuffix:{ fontSize: 14, color: C.muted, fontWeight: '600' },
-    levelBadge:    { alignSelf: 'flex-start', marginTop: 8, borderRadius: 99, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1 },
-    levelText:     { fontSize: 11, fontWeight: '800' },
-    scoreRight:    { alignItems: 'center', gap: 10 },
-    ring:          { width: 64, height: 64, borderRadius: 32, borderWidth: 3, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.04)' },
-    ringNum:       { fontSize: 18, fontWeight: '900' },
-    streakPill:    { backgroundColor: 'rgba(249,115,22,0.15)', borderRadius: 99, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(249,115,22,0.3)' },
-    streakText:    { color: C.orange, fontSize: 11, fontWeight: '800' },
+    hero: { alignItems: 'center', paddingTop: 16, paddingBottom: 24 },
+    ringWrap: { marginBottom: 16 },
+    ringInner: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
+    scoreNum: { fontSize: 48, fontWeight: '900' },
+    scoreUnit: { fontSize: 9, fontWeight: '700', color: '#4b5563', letterSpacing: 3, marginTop: -4 },
+    // (name moved to greeting section)
 
-    // Sections
-    section:       { padding: 20, paddingBottom: 0 },
-    sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-    sectionTitle:  { fontSize: 10, fontWeight: '800', color: C.muted, letterSpacing: 2, textTransform: 'uppercase' },
-    customiseBtn:  { fontSize: 11, color: C.cyan, fontWeight: '700' },
+    statsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 36 },
+    stat: { alignItems: 'center', paddingHorizontal: 24 },
+    statNum: { fontSize: 26, fontWeight: '800', fontFamily: Platform.OS === 'android' ? 'sans-serif-condensed' : 'HelveticaNeue-CondensedBold' },
+    statKey: { fontSize: 9, fontWeight: '600', color: '#4b5563', letterSpacing: 2, marginTop: 4 },
+    statDiv: { width: 1, height: 32, backgroundColor: '#1f2937' },
 
-    // Daily Tracker
-    trackerCard:   { backgroundColor: C.surf, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: C.border },
-    trackerRow:    { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
-    trackerIcon:   { fontSize: 18, width: 30, textAlign: 'center', marginRight: 10 },
-    trackerLabelRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-    trackerLabel:  { fontSize: 11, color: C.muted, fontWeight: '600' },
-    trackerVal:    { fontSize: 11, fontWeight: '800' },
-    trackerUnit:   { fontSize: 10, color: C.muted, fontWeight: '600' },
-    trackerBarBg:  { height: 4, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 99, overflow: 'hidden' },
-    trackerBarFill:{ height: '100%', borderRadius: 99 },
+    cta: { marginHorizontal: 20, borderRadius: 6, paddingVertical: 32, paddingHorizontal: 28, marginBottom: 32, position: 'relative',
+        ...Platform.select({ android: { elevation: 12 }, ios: { shadowColor: '#06b6d4', shadowOpacity: 0.3, shadowOffset: { width: 0, height: 12 }, shadowRadius: 28 } }),
+    },
+    ctaEyebrow: { fontSize: 10, fontWeight: '700', color: 'rgba(255,255,255,0.4)', letterSpacing: 3, marginBottom: 8 },
+    ctaTitle: { fontSize: 40, fontWeight: '900', color: '#fff', lineHeight: 42, letterSpacing: -1, fontFamily: Platform.OS === 'android' ? 'sans-serif-condensed' : 'HelveticaNeue-CondensedBold' },
+    ctaBtn: { position: 'absolute', bottom: 24, right: 24, width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
+    ctaBtnText: { fontSize: 14, fontWeight: '800', color: '#fff', letterSpacing: 1 },
 
-    // Content Grid
-    grid:          { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 4 },
-    tile:          { width: (SW - 56) / 4, alignItems: 'center', marginBottom: 4 },
-    tileIcon:      { width: 56, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
-    tileEmoji:     { fontSize: 26 },
-    tileLabel:     { fontSize: 9, color: C.textSub, fontWeight: '700', textAlign: 'center', lineHeight: 12 },
+    actions: { paddingHorizontal: 24, marginBottom: 36 },
 
-    // AI Trainer banner
-    aiTrainerBanner: { borderRadius: 18, padding: 18, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 },
-    aiTag:           { backgroundColor: 'rgba(255,255,255,0.15)', alignSelf: 'flex-start', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginBottom: 8 },
-    aiTagText:       { fontSize: 9, color: '#fff', fontWeight: '800', letterSpacing: 1 },
-    aiTitle:         { fontSize: 16, fontWeight: '900', color: '#fff' },
-    aiSub:           { fontSize: 11, color: 'rgba(255,255,255,0.7)', marginTop: 3 },
-    aiBtn:           { backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
-    aiBtnText:       { color: '#fff', fontWeight: '900', fontSize: 13 },
-
-    // Featured banners
-    bannerWrap:    { width: SW * 0.72, borderRadius: 16, overflow: 'hidden' },
-    bannerGrad:    { padding: 16, minHeight: 90, justifyContent: 'space-between' },
-    bannerBadge:   { backgroundColor: 'rgba(255,255,255,0.25)', alignSelf: 'flex-start', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginBottom: 8 },
-    bannerBadgeText:{ fontSize: 9, color: '#fff', fontWeight: '900', letterSpacing: 1 },
-    bannerTitle:   { fontSize: 14, fontWeight: '900', color: '#fff', lineHeight: 18 },
-    bannerSub:     { fontSize: 10, color: 'rgba(255,255,255,0.75)', marginTop: 4 },
-
-    // Creator cards
-    creatorCard:   { width: 110, backgroundColor: C.surf, borderRadius: 16, padding: 12, alignItems: 'center', borderWidth: 1, borderColor: C.border },
-    creatorAvatar: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
-    creatorInitials:{ color: '#fff', fontWeight: '900', fontSize: 18 },
-    creatorName:   { fontSize: 10, color: C.text, fontWeight: '800', textAlign: 'center', marginBottom: 2 },
-    creatorHandle: { fontSize: 9, color: C.muted, textAlign: 'center', marginBottom: 8 },
-    followBtn:     { backgroundColor: 'rgba(249,115,22,0.15)', borderRadius: 99, paddingHorizontal: 12, paddingVertical: 5, borderWidth: 1, borderColor: 'rgba(249,115,22,0.4)' },
-    followBtnActive:{ backgroundColor: C.orange },
-    followBtnText: { fontSize: 10, color: C.orange, fontWeight: '800' },
+    today: { paddingHorizontal: 24 },
+    todayHead: { fontSize: 11, fontWeight: '800', color: '#4b5563', letterSpacing: 3, marginBottom: 20 },
+    metricRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+    metricLabel: { fontSize: 13, color: '#6b7280', fontWeight: '400' },
+    metricVal: { fontSize: 13, color: '#f9fafb', fontWeight: '700', fontFamily: Platform.OS === 'android' ? 'sans-serif-condensed' : 'Courier' },
+    metricGoal: { color: '#374151', fontWeight: '400' },
+    barTrack: { height: 3, backgroundColor: '#111', borderRadius: 2, overflow: 'hidden' },
+    barFill: { height: '100%', borderRadius: 2 },
 });
