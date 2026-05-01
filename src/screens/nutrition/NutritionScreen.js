@@ -43,6 +43,7 @@ export default function NutritionScreen({ navigation, route }) {
     const [meals, setMeals] = useState({});
     const [summary, setSummary] = useState(null);
     const [recentMeals, setRecentMeals] = useState({});
+    const [sportTips, setSportTips] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
     const [expanded, setExpanded] = useState({ breakfast: true, lunch: true, dinner: true, snack: true });
@@ -58,12 +59,20 @@ export default function NutritionScreen({ navigation, route }) {
         setLoading(true);
         setError(false);
         try {
-            const [mealsRes, summaryRes] = await Promise.all([
+            const [mealsRes, summaryRes, athleteRes] = await Promise.all([
                 api.get(`/athlete/${id}/meals?date=${d}`),
                 api.get(`/athlete/${id}/nutrition/summary?on_date=${d}`),
+                api.get(`/athlete/${id}`),
             ]);
             setMeals(mealsRes?.meals || {});
             setSummary(summaryRes);
+            const sport = athleteRes?.sport;
+            if (sport) {
+                try {
+                    const tips = await api.get(`/foods/tips/${sport}`);
+                    setSportTips(tips);
+                } catch {}
+            }
         } catch (e) {
             console.warn('[NutritionScreen] load error', e);
             setError(true);
@@ -223,6 +232,41 @@ export default function NutritionScreen({ navigation, route }) {
                     <TouchableOpacity style={s.goalsLink} onPress={() => { tap(); navigation.navigate('NutritionGoals', { athleteId }); }}>
                         <Text style={s.goalsLinkText}>Set Custom Goals →</Text>
                     </TouchableOpacity>
+
+                    {/* Sport-specific nutrition tips */}
+                    {sportTips && (
+                        <View style={s.tipsCard}>
+                            <Text style={s.tipsTitle}>
+                                {sportTips.sport?.replace(/_/g, ' ').toUpperCase()} NUTRITION
+                            </Text>
+                            <Text style={s.tipsFocus}>{sportTips.focus}</Text>
+
+                            <Text style={s.tipsSectionLabel}>Pre-workout</Text>
+                            <View style={s.tipsRow}>
+                                {(sportTips.pre_workout || []).map((f, i) => (
+                                    <View key={i} style={s.tipsPill}><Text style={s.tipsPillText}>{f}</Text></View>
+                                ))}
+                            </View>
+
+                            <Text style={s.tipsSectionLabel}>Post-workout</Text>
+                            <View style={s.tipsRow}>
+                                {(sportTips.post_workout || []).map((f, i) => (
+                                    <View key={i} style={[s.tipsPill, s.tipsPillGreen]}><Text style={[s.tipsPillText, { color: '#10b981' }]}>{f}</Text></View>
+                                ))}
+                            </View>
+
+                            {(sportTips.avoid || []).length > 0 && (
+                                <>
+                                    <Text style={s.tipsSectionLabel}>Avoid</Text>
+                                    {sportTips.avoid.map((a, i) => (
+                                        <Text key={i} style={s.tipsAvoidText}>• {a}</Text>
+                                    ))}
+                                </>
+                            )}
+                        </View>
+                    )}
+
+                    <View style={{ height: 16 }} />
                 </ScrollView>
             )}
         </SafeAreaView>
@@ -266,4 +310,13 @@ const s = StyleSheet.create({
     emptyStateTitle: { color: C.muted, fontSize: 15, lineHeight: 22, marginBottom: 16, textAlign: 'center' },
     emptyStateCTA: { backgroundColor: C.cyan, borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12 },
     emptyStateCTAText: { color: C.bg, fontSize: 14, fontWeight: '700' },
+    tipsCard: { backgroundColor: C.surf, borderRadius: 14, padding: 16, marginBottom: 12 },
+    tipsTitle: { color: C.cyan, fontSize: 11, fontWeight: '700', letterSpacing: 1.5, marginBottom: 4 },
+    tipsFocus: { color: C.textSub, fontSize: 12, marginBottom: 12, lineHeight: 17 },
+    tipsSectionLabel: { color: C.muted, fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6, marginTop: 8 },
+    tipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+    tipsPill: { backgroundColor: 'rgba(252,76,2,0.08)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
+    tipsPillGreen: { backgroundColor: 'rgba(16,185,129,0.08)' },
+    tipsPillText: { color: C.cyan, fontSize: 12, fontWeight: '500' },
+    tipsAvoidText: { color: C.muted, fontSize: 12, marginTop: 2, lineHeight: 17 },
 });
