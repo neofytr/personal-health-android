@@ -4,6 +4,7 @@ import {
     View, Text, ScrollView, TouchableOpacity, StyleSheet,
     SafeAreaView, ActivityIndicator,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { C } from '../../styles/colors';
 import api from '../../services/api';
@@ -45,11 +46,47 @@ function MiniBar({ values = [], color = C.cyan, barHeight = 40 }) {
     );
 }
 
+const REC_COLOR = { hard: '#10b981', normal: '#10b981', light: '#f59e0b', active_recovery: '#f59e0b', rest: '#ef4444' };
+const REC_ICON  = { hard: 'flash', normal: 'checkmark-circle', light: 'partly-sunny', active_recovery: 'walk', rest: 'bed' };
+
+function StreakBadge({ streak }) {
+    if (!streak || streak.current_streak === 0) return null;
+    return (
+        <View style={wb.streakRow}>
+            <Ionicons name="flame" size={16} color="#FC4C02" />
+            <Text style={wb.streakText}>{streak.current_streak}-day streak</Text>
+            {streak.longest_streak > streak.current_streak && (
+                <Text style={wb.streakBest}>best: {streak.longest_streak}</Text>
+            )}
+        </View>
+    );
+}
+
+function RecoveryCard({ recovery }) {
+    if (!recovery) return null;
+    const rec = recovery.recommendation || 'normal';
+    const color = REC_COLOR[rec] || C.muted;
+    const icon = REC_ICON[rec] || 'body';
+    return (
+        <View style={[wb.recCard, { borderLeftColor: color }]}>
+            <View style={wb.recRow}>
+                <Ionicons name={icon} size={18} color={color} />
+                <Text style={[wb.recLabel, { color }]}>{recovery.label || rec}</Text>
+                <Text style={wb.recScore}>{recovery.score}/100</Text>
+            </View>
+            <Text style={wb.recDesc}>{recovery.description}</Text>
+            {recovery.tip ? <Text style={wb.recTip}>{recovery.tip}</Text> : null}
+        </View>
+    );
+}
+
 export default function WellnessScreen({ navigation, route }) {
     const [athleteId, setAthleteId] = useState(route.params?.athleteId || null);
     const [scoreData, setScoreData] = useState(null);
     const [trends, setTrends] = useState(null);
     const [history, setHistory] = useState([]);
+    const [streak, setStreak] = useState(null);
+    const [recovery, setRecovery] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
     const [sleepExpanded, setSleepExpanded] = useState(false);
@@ -65,14 +102,18 @@ export default function WellnessScreen({ navigation, route }) {
         setLoading(true);
         setError(false);
         try {
-            const [scoreRes, trendsRes, histRes] = await Promise.all([
+            const [scoreRes, trendsRes, histRes, streakRes, recRes] = await Promise.allSettled([
                 api.get(`/athlete/${id}/wellness/score`),
                 api.get(`/athlete/${id}/wellness/trends?period=weekly`),
                 api.get(`/athlete/${id}/wellness`),
+                api.get(`/streak/${id}`),
+                api.get(`/athlete/${id}/recovery/recommendation`),
             ]);
-            setScoreData(scoreRes);
-            setTrends(trendsRes);
-            setHistory(histRes?.entries || []);
+            if (scoreRes.status === 'fulfilled') setScoreData(scoreRes.value);
+            if (trendsRes.status === 'fulfilled') setTrends(trendsRes.value);
+            if (histRes.status === 'fulfilled') setHistory(histRes.value?.entries || []);
+            if (streakRes.status === 'fulfilled') setStreak(streakRes.value);
+            if (recRes.status === 'fulfilled') setRecovery(recRes.value);
         } catch (e) {
             console.warn('[WellnessScreen] load error', e);
             setError(true);
@@ -132,6 +173,7 @@ export default function WellnessScreen({ navigation, route }) {
                     {/* Score */}
                     <View style={s.scoreSection}>
                         <ScoreCircle score={score} />
+                        <StreakBadge streak={streak} />
                         <View style={[s.recoveryBadge, { borderColor: recoveryColor + '60', backgroundColor: recoveryColor + '18' }]}>
                             <Text style={[s.recoveryText, { color: recoveryColor }]}>{recoveryLabel}</Text>
                         </View>
@@ -143,6 +185,9 @@ export default function WellnessScreen({ navigation, route }) {
                             </Text>
                         ) : null}
                     </View>
+
+                    {/* Recovery readiness card */}
+                    <RecoveryCard recovery={recovery} />
 
                     {/* Component grid */}
                     {hasData && (
@@ -228,6 +273,18 @@ const sc = StyleSheet.create({
     circle: { width: 130, height: 130, borderRadius: 65, borderWidth: 7, alignItems: 'center', justifyContent: 'center' },
     scoreNum: { fontSize: 44, fontWeight: '900', lineHeight: 52 },
     scoreMax: { fontSize: 13, color: C.muted, marginTop: -4 },
+});
+
+const wb = StyleSheet.create({
+    streakRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 },
+    streakText: { color: '#FC4C02', fontWeight: '700', fontSize: 14 },
+    streakBest: { color: C.muted, fontSize: 11, marginLeft: 4 },
+    recCard: { backgroundColor: C.surf, borderRadius: 12, padding: 14, marginBottom: 10, borderLeftWidth: 4 },
+    recRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+    recLabel: { fontWeight: '700', fontSize: 14, flex: 1 },
+    recScore: { color: C.muted, fontSize: 13 },
+    recDesc: { color: C.text, fontSize: 13, lineHeight: 18 },
+    recTip: { color: C.textSub, fontSize: 12, marginTop: 6, fontStyle: 'italic' },
 });
 
 const s = StyleSheet.create({
